@@ -64,12 +64,24 @@ current_local_price = st.sidebar.number_input(
 # Cached functions
 @st.cache_data(ttl=3600)
 def get_current_prices():
+    """Fetch current CBOT corn and NGN/USD"""
     corn = yf.download("ZC=F", period="5d", interval="1d")
     ngn = yf.download("NGN=X", period="5d", interval="1d")
-    corn_close = corn['Close'].squeeze().iloc[-1] / 100
-    ngn_close = ngn['Close'].squeeze().iloc[-1]
+    
+    # Handle both scalar and Series returns from squeeze()
+    corn_close = corn['Close'].squeeze()
+    if hasattr(corn_close, 'iloc'):
+        corn_close = corn_close.iloc[-1]
+    # else: already a scalar
+    
+    ngn_close = ngn['Close'].squeeze()
+    if hasattr(ngn_close, 'iloc'):
+        ngn_close = ngn_close.iloc[-1]
+    # else: already a scalar
+    
     bushel_to_kg = 25.4
-    return (corn_close / bushel_to_kg) * ngn_close, ngn_close
+    return (corn_close / 100 / bushel_to_kg) * ngn_close, ngn_close
+
 
 @st.cache_data(ttl=3600)
 def load_historical_data():
@@ -80,8 +92,14 @@ def load_historical_data():
     
     corn = yf.download("ZC=F", period="5y", interval="1d")
     ngn = yf.download("NGN=X", period="5y", interval="1d")
-    corn_close = corn['Close'].squeeze() / 100
-    ngn_close = ngn['Close'].squeeze()
+   corn_close = corn['Close'].squeeze()
+if hasattr(corn_close, 'iloc'):
+    corn_close = corn_close.iloc[-1]
+corn_close = corn_close / 100
+
+ngn_close = ngn['Close'].squeeze()
+if hasattr(ngn_close, 'iloc'):
+    ngn_close = ngn_close.iloc[-1]
     corn_monthly = corn_close.resample('ME').mean()
     ngn_monthly = ngn_close.resample('ME').mean()
     bushel_to_kg = 25.4
