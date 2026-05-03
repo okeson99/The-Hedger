@@ -20,9 +20,9 @@ A web-based tool that helps maize farmers and cooperatives:
 - Receive plain-language recommendations with visual P&L outcomes
 
 ## Current Status
+✅ **Month 1: MVP Complete** — Working maize hedge model + white paper published
+🎯 **Month 2: Pilot Program** — Seeking 1–3 farms/cooperatives for testing
 
-🚧 **Month 1: MVP Build In Progress**  
-Target: Working maize hedge model + white paper by Day 30
 
 ## Key Finding: Basis Stability
 
