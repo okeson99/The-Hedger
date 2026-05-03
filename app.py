@@ -5,6 +5,7 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime
+import os
 
 # Page config
 st.set_page_config(
@@ -19,7 +20,6 @@ st.markdown("""
     <style>
     .main-header {font-size: 2.5rem; font-weight: bold; color: #1f4e79;}
     .sub-header {font-size: 1.2rem; color: #555; margin-bottom: 2rem;}
-    .metric-card {background-color: #f0f2f6; padding: 1rem; border-radius: 0.5rem;}
     .warning-box {background-color: #fff3cd; padding: 1rem; border-radius: 0.5rem; border-left: 4px solid #ffc107;}
     .success-box {background-color: #d4edda; padding: 1rem; border-radius: 0.5rem; border-left: 4px solid #28a745;}
     .info-box {background-color: #d1ecf1; padding: 1rem; border-radius: 0.5rem; border-left: 4px solid #17a2b8;}
@@ -65,56 +65,78 @@ current_local_price = st.sidebar.number_input(
 @st.cache_data(ttl=3600)
 def get_current_prices():
     """Fetch current CBOT corn and NGN/USD"""
-    corn = yf.download("ZC=F", period="5d", interval="1d")
-    ngn = yf.download("NGN=X", period="5d", interval="1d")
-    
-    # Handle both scalar and Series returns from squeeze()
-    corn_close = corn['Close'].squeeze()
-    if hasattr(corn_close, 'iloc'):
-        corn_close = corn_close.iloc[-1]
-    # else: already a scalar
-    
-    ngn_close = ngn['Close'].squeeze()
-    if hasattr(ngn_close, 'iloc'):
-        ngn_close = ngn_close.iloc[-1]
-    # else: already a scalar
-    
-    bushel_to_kg = 25.4
-    return (corn_close / 100 / bushel_to_kg) * ngn_close, ngn_close
-
+    try:
+        corn = yf.download("ZC=F", period="10d", interval="1d", progress=False)
+        ngn = yf.download("NGN=X", period="10d", interval="1d", progress=False)
+        
+        if corn.empty or len(corn) == 0:
+            st.error("Failed to fetch CBOT corn data")
+            return 250.0, 1375.0
+            
+        corn_close = corn['Close'].squeeze()
+        if isinstance(corn_close, pd.Series):
+            corn_close = corn_close.dropna().iloc[-1]
+        
+        if ngn.empty or len(ngn) == 0:
+            st.error("Failed to fetch NGN/USD data")
+            return 250.0, 1375.0
+            
+        ngn_close = ngn['Close'].squeeze()
+        if isinstance(ngn_close, pd.Series):
+            ngn_close = ngn_close.dropna().iloc[-1]
+        
+        bushel_to_kg = 25.4
+        return (corn_close / 100 / bushel_to_kg) * ngn_close, ngn_close
+        
+    except Exception as e:
+        st.error(f"Price fetch error: {e}")
+        return 250.0, 1375.0
 
 @st.cache_data(ttl=3600)
 def load_historical_data():
-    maize = pd.read_excel("nbs_maize_filtered.xlsx")
-    maize['Date'] = pd.to_datetime(maize['Date'], dayfirst=True, errors='coerce')
-    maize['YearMonth'] = maize['Date'].dt.to_period('M').dt.to_timestamp()
-    monthly_maize = maize.groupby('YearMonth')['UPRICE'].mean().reset_index()
-    
-    corn = yf.download("ZC=F", period="5y", interval="1d")
-    ngn = yf.download("NGN=X", period="5y", interval="1d")
-   corn_close = corn['Close'].squeeze()
-if hasattr(corn_close, 'iloc'):
-    corn_close = corn_close.iloc[-1]
-corn_close = corn_close / 100
-
-ngn_close = ngn['Close'].squeeze()
-if hasattr(ngn_close, 'iloc'):
-    ngn_close = ngn_close.iloc[-1]
-    corn_monthly = corn_close.resample('ME').mean()
-    ngn_monthly = ngn_close.resample('ME').mean()
-    bushel_to_kg = 25.4
-    corn_ngn_per_kg = (corn_monthly / bushel_to_kg) * ngn_monthly
-    
-    global_price = pd.DataFrame({
-        'YearMonth': corn_ngn_per_kg.index,
-        'CBOT_Corn_NGN_per_kg': corn_ngn_per_kg.values
-    })
-    global_price['YearMonth'] = global_price['YearMonth'].dt.to_period('M').dt.to_timestamp()
-    
-    merged = pd.merge(monthly_maize, global_price, on='YearMonth', how='inner')
-    merged['Basis_NGN_per_kg'] = merged['UPRICE'] - merged['CBOT_Corn_NGN_per_kg']
-    
-    return merged
+    try:
+        maize = pd.read_excel("nbs_maize_filtered.xlsx")
+        maize['Date'] = pd.to_datetime(maize['Date'], dayfirst=True, errors='coerce')
+        maize['YearMonth'] = maize['Date'].dt.to_period('M').dt.to_timestamp()
+        monthly_maize = maize.groupby('YearMonth')['UPRICE'].mean().reset_index()
+        
+        corn = yf.download("ZC=F", period="5y", interval="1d", progress=False)
+        ngn = yf.download("NGN=X", period="5y", interval="1d", progress=False)
+        
+        if corn.empty or ngn.empty:
+            st.error("Failed to load historical global data")
+            return pd.DataFrame()
+        
+        corn_close = corn['Close'].squeeze() / 100
+        ngn_close = ngn['Close'].squeeze()
+        
+        if isinstance(corn_close, pd.Series):
+            corn_monthly = corn_close.resample('ME').mean()
+        else:
+            corn_monthly = pd.Series([corn_close], index=[pd.Timestamp.now()])
+            
+        if isinstance(ngn_close, pd.Series):
+            ngn_monthly = ngn_close.resample('ME').mean()
+        else:
+            ngn_monthly = pd.Series([ngn_close], index=[pd.Timestamp.now()])
+        
+        bushel_to_kg = 25.4
+        corn_ngn_per_kg = (corn_monthly / bushel_to_kg) * ngn_monthly
+        
+        global_price = pd.DataFrame({
+            'YearMonth': corn_ngn_per_kg.index,
+            'CBOT_Corn_NGN_per_kg': corn_ngn_per_kg.values
+        })
+        global_price['YearMonth'] = global_price['YearMonth'].dt.to_period('M').dt.to_timestamp()
+        
+        merged = pd.merge(monthly_maize, global_price, on='YearMonth', how='inner')
+        merged['Basis_NGN_per_kg'] = merged['UPRICE'] - merged['CBOT_Corn_NGN_per_kg']
+        
+        return merged
+        
+    except Exception as e:
+        st.error(f"Historical data error: {e}")
+        return pd.DataFrame()
 
 def calculate_hedge(yield_kg, risk_tolerance, current_local_price):
     hedge_ratios = {'Conservative': 0.40, 'Moderate': 0.25, 'Aggressive': 0.10}
@@ -133,10 +155,14 @@ def calculate_hedge(yield_kg, risk_tolerance, current_local_price):
     net_hedged_loss = unhedged_loss - futures_gain
     
     return {
-        'hedge_ratio': hedge_ratio, 'hedge_quantity_kg': hedge_quantity_kg,
-        'num_contracts': num_contracts, 'global_price': global_price,
-        'basis': basis, 'total_margin': total_margin,
-        'unhedged_loss': unhedged_loss, 'hedged_loss': net_hedged_loss,
+        'hedge_ratio': hedge_ratio,
+        'hedge_quantity_kg': hedge_quantity_kg,
+        'num_contracts': num_contracts,
+        'global_price': global_price,
+        'basis': basis,
+        'total_margin': total_margin,
+        'unhedged_loss': unhedged_loss,
+        'hedged_loss': net_hedged_loss,
         'savings': unhedged_loss - net_hedged_loss,
         'scale_feasible': num_contracts >= 1
     }
@@ -161,7 +187,6 @@ result = calculate_hedge(yield_kg, risk_tolerance, current_local_price)
 # TABS
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Recommendation", "📈 Market Analysis", "🎲 Risk Simulation", "📜 Historical Proof"])
 
-# TAB 1: RECOMMENDATION
 with tab1:
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -192,7 +217,6 @@ with tab1:
     with col5: st.metric("Hedged Loss", f"₦{result['hedged_loss']:,.0f}")
     with col6: st.metric("Savings", f"₦{result['savings']:,.0f}")
 
-    # Risk tolerance comparison
     st.subheader("⚖️ Compare All Risk Levels")
     comp_data = []
     for rt in ['Conservative', 'Moderate', 'Aggressive']:
@@ -206,49 +230,39 @@ with tab1:
         })
     st.dataframe(pd.DataFrame(comp_data), use_container_width=True, hide_index=True)
 
-# TAB 2: MARKET ANALYSIS
 with tab2:
     st.subheader("📈 Nigerian Maize vs. Global Corn (Jan 2024 - Dec 2025)")
     
     data = load_historical_data()
     
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-    
-    # Price comparison
-    axes[0].plot(data['YearMonth'], data['UPRICE'], label='Nigerian Maize (₦/kg)', 
-                 linewidth=2, marker='o', markersize=4)
-    axes[0].plot(data['YearMonth'], data['CBOT_Corn_NGN_per_kg'], 
-                 label='CBOT Corn (₦/kg)', linewidth=2, marker='s', markersize=4)
-    axes[0].set_ylabel('Price (₦/kg)', fontsize=11)
-    axes[0].set_title('Local vs. Global Maize/Corn Prices', fontsize=13, fontweight='bold')
-    axes[0].legend(loc='upper left')
-    axes[0].grid(True, alpha=0.3)
-    
-    # Basis
-    axes[1].plot(data['YearMonth'], data['Basis_NGN_per_kg'], color='red', 
-                 linewidth=2, marker='o', markersize=4)
-    axes[1].axhline(y=data['Basis_NGN_per_kg'].mean(), color='black', 
-                    linestyle='--', label=f'Mean: ₦{data["Basis_NGN_per_kg"].mean():.0f}/kg')
-    axes[1].fill_between(data['YearMonth'], 
-                         data['Basis_NGN_per_kg'].mean() - data['Basis_NGN_per_kg'].std(),
-                         data['Basis_NGN_per_kg'].mean() + data['Basis_NGN_per_kg'].std(),
-                         alpha=0.2, color='red', label='±1 Std Dev')
-    axes[1].set_ylabel('Basis (₦/kg)', fontsize=11)
-    axes[1].set_title('Basis Stability: Local Premium Over Global Price', 
-                      fontsize=13, fontweight='bold')
-    axes[1].legend(loc='upper left')
-    axes[1].grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    st.pyplot(fig)
-    
-    # Basis stats
-    col_b1, col_b2, col_b3 = st.columns(3)
-    with col_b1: st.metric("Mean Basis", f"₦{data['Basis_NGN_per_kg'].mean():.0f}/kg")
-    with col_b2: st.metric("Basis Std Dev", f"₦{data['Basis_NGN_per_kg'].std():.0f}/kg")
-    with col_b3: st.metric("Stability", f"{(data['Basis_NGN_per_kg'].std()/data['Basis_NGN_per_kg'].mean()*100):.1f}%")
+    if not data.empty:
+        fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+        
+        axes[0].plot(data['YearMonth'], data['UPRICE'], label='Nigerian Maize (₦/kg)', linewidth=2, marker='o', markersize=4)
+        axes[0].plot(data['YearMonth'], data['CBOT_Corn_NGN_per_kg'], label='CBOT Corn (₦/kg)', linewidth=2, marker='s', markersize=4)
+        axes[0].set_ylabel('Price (₦/kg)', fontsize=11)
+        axes[0].set_title('Local vs. Global Maize/Corn Prices', fontsize=13, fontweight='bold')
+        axes[0].legend(loc='upper left')
+        axes[0].grid(True, alpha=0.3)
+        
+        axes[1].plot(data['YearMonth'], data['Basis_NGN_per_kg'], color='red', linewidth=2, marker='o', markersize=4)
+        axes[1].axhline(y=data['Basis_NGN_per_kg'].mean(), color='black', linestyle='--', label=f'Mean: ₦{data["Basis_NGN_per_kg"].mean():.0f}/kg')
+        axes[1].fill_between(data['YearMonth'], data['Basis_NGN_per_kg'].mean() - data['Basis_NGN_per_kg'].std(), data['Basis_NGN_per_kg'].mean() + data['Basis_NGN_per_kg'].std(), alpha=0.2, color='red', label='±1 Std Dev')
+        axes[1].set_ylabel('Basis (₦/kg)', fontsize=11)
+        axes[1].set_title('Basis Stability: Local Premium Over Global Price', fontsize=13, fontweight='bold')
+        axes[1].legend(loc='upper left')
+        axes[1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        st.pyplot(fig)
+        
+        col_b1, col_b2, col_b3 = st.columns(3)
+        with col_b1: st.metric("Mean Basis", f"₦{data['Basis_NGN_per_kg'].mean():.0f}/kg")
+        with col_b2: st.metric("Basis Std Dev", f"₦{data['Basis_NGN_per_kg'].std():.0f}/kg")
+        with col_b3: st.metric("Stability", f"{(data['Basis_NGN_per_kg'].std()/data['Basis_NGN_per_kg'].mean()*100):.1f}%")
+    else:
+        st.warning("Historical data not available")
 
-# TAB 3: RISK SIMULATION
 with tab3:
     st.subheader("🎲 Monte Carlo Simulation (500 scenarios)")
     
@@ -256,7 +270,6 @@ with tab3:
     
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     
-    # P&L distributions
     axes[0].hist(mc_results['unhedged_pnl'], bins=50, alpha=0.6, label='Unhedged', color='red')
     axes[0].hist(mc_results['hedged_pnl'], bins=50, alpha=0.6, label='Hedged', color='green')
     axes[0].axvline(0, color='black', linestyle='-', linewidth=1)
@@ -266,7 +279,6 @@ with tab3:
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
     
-    # Risk metrics text
     unhedged = mc_results['unhedged_pnl']
     hedged = mc_results['hedged_pnl']
     metrics_text = f"""Risk Metrics:
@@ -275,32 +287,22 @@ with tab3:
 • Std Deviation: Unhedged ₦{np.std(unhedged):,.0f} | Hedged ₦{np.std(hedged):,.0f}
 • Risk Reduction: {((np.std(unhedged)-np.std(hedged))/np.std(unhedged)*100):.1f}%"""
     
-    axes[1].text(0.1, 0.5, metrics_text, fontsize=11, family='monospace',
-                 verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    axes[1].text(0.1, 0.5, metrics_text, fontsize=11, family='monospace', verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     axes[1].axis('off')
     axes[1].set_title('Risk Summary')
     
     plt.tight_layout()
     st.pyplot(fig)
 
-# TAB 4: HISTORICAL PROOF
 with tab4:
     st.subheader("📜 Historical Backtest: 3 Real Market Scenarios (2024)")
     
-    # Recreate backtest data
     backtest_data = [
-        {'name': 'Pre-Planting Hedge', 'entry': 'Apr 2024', 'exit': 'Oct 2024',
-         'unhedged': -145198, 'hedged': 32428, 'savings': -177626,
-         'desc': 'Prices rose after planting. Hedge "cost" ₦177k but provided protection.'},
-        {'name': 'Harvest Crash', 'entry': 'Aug 2024', 'exit': 'Dec 2024',
-         'unhedged': 497721, 'hedged': 462513, 'savings': 35208,
-         'desc': 'Prices rose modestly. Hedge capped upside by only ₦35k.'},
-        {'name': 'Basis Spike', 'entry': 'Jun 2024', 'exit': 'Sep 2024',
-         'unhedged': -562391, 'hedged': -429196, 'savings': 133195,
-         'desc': 'Prices crashed during supply shock. Hedge saved ₦133k (24% loss reduction).'}
+        {'name': 'Pre-Planting Hedge', 'entry': 'Apr 2024', 'exit': 'Oct 2024', 'unhedged': -145198, 'hedged': 32428, 'savings': -177626, 'desc': 'Prices rose after planting. Hedge "cost" ₦177k but provided protection.'},
+        {'name': 'Harvest Crash', 'entry': 'Aug 2024', 'exit': 'Dec 2024', 'unhedged': 497721, 'hedged': 462513, 'savings': 35208, 'desc': 'Prices rose modestly. Hedge capped upside by only ₦35k.'},
+        {'name': 'Basis Spike', 'entry': 'Jun 2024', 'exit': 'Sep 2024', 'unhedged': -562391, 'hedged': -429196, 'savings': 133195, 'desc': 'Prices crashed during supply shock. Hedge saved ₦133k (24% loss reduction).'}
     ]
     
-    # Chart
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     for i, case in enumerate(backtest_data):
         ax = axes[i]
@@ -314,13 +316,10 @@ with tab4:
         ax.grid(True, alpha=0.3)
         for bar, val in zip(bars, values):
             height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height,
-                   f'₦{val:,.0f}', ha='center', 
-                   va='bottom' if height > 0 else 'top', fontsize=9, fontweight='bold')
+            ax.text(bar.get_x() + bar.get_width()/2., height, f'₦{val:,.0f}', ha='center', va='bottom' if height > 0 else 'top', fontsize=9, fontweight='bold')
     plt.tight_layout()
     st.pyplot(fig)
     
-    # Case descriptions
     for case in backtest_data:
         with st.expander(f"{case['name']} ({case['entry']} → {case['exit']})"):
             st.write(case['desc'])
@@ -337,6 +336,5 @@ with tab4:
         </div>
     """, unsafe_allow_html=True)
 
-# Footer
 st.markdown("---")
 st.markdown("Built by Okaro Okechukwu | [GitHub](https://github.com/okeson99/The-Hedger) | [LinkedIn](https://www.linkedin.com/in/okechukwu-okaro-1042422b/)")
