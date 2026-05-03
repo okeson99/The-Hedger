@@ -1,4 +1,6 @@
 https://github.com/okeson99/The-Hedger/blob/main/The_Hedger_Roadmap.md
+## 📄 White Paper
+[Download The Hedger White Paper v1.0](https://github.com/okeson99/The-Hedger/raw/main/docs/The_Hedger_White_Paper.pdf)
 # The Hedger
 
 **Quantitative risk management tools for African agriculture.**
